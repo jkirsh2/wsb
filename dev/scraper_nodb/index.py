@@ -8,141 +8,165 @@ import time
 import matplotlib.pyplot as plt
 
 
+
 def next_business_day(date):
     us_holidays = holidays.US()
     next_day    = date + dt.timedelta(1)
-    if next_day.weekday() in (5, 6) or next_day in us_holidays:
+    if next_day.weekday() in (5, 6) or next_day in us_holidays or next_day in set([dt.datetime(2017, 4, 14)]):
         next_day = next_business_day(next_day)
     return next_day
 
 
 class portfolio_contructor(object):
-	def __init__(self, subr, cred_path, save_dir=None, cutoff=0.02):
-		self.subr      = subr
-		self.cred_path = cred_path
-		self.save_dir  = save_dir
-		self.cutoff    = cutoff
+    def __init__(self, subr, cred_path, save_dir=None, cutoff=0.01):
+        self.subr      = subr
+        self.cred_path = cred_path
+        self.save_dir  = save_dir
+        self.cutoff    = cutoff
 
-		self.cache = {}
+        self.cache = {}
 
-	def get_raw_exposure_df(self, d0, d1):
-	    result = []
-	    ticker_list = make_ticker_list()
+    def get_raw_exposure_df(self, d0, d1):
+        
+        result = []
+        ticker_list = make_ticker_list()
 
-	    s = SubScraper(self.cred_path)
-	    submissions = s.get_submissions_between(self.subr, str(d0.date()), str(d1.date()))
+        s = SubScraper(self.cred_path)
+        d = d0
 
-	    for s in submissions:
-	        result.append(process_submission(s, ticker_list))
+        while d < d1:
+            if d in self.cache:
+                result += self.cache[d]
+                d += dt.timedelta(1)
+            else:
+                r = []
+                submissions = s.get_submissions_between(self.subr, str(d.date()), str((d + dt.timedelta(1)).date()))
 
-	    df = pd.DataFrame(result, columns = ['date', 'ticker', 'sentiment', 'exposure'])
-	    df = df.groupby(['date', 'ticker']).agg({'sentiment':'mean', 'exposure':'sum'}).reset_index()
-	    df_totalexposure = (df
-	                        .groupby('date')
-	                        .agg({'exposure':sum})
-	                        .rename(columns = {'exposure':'daily_exposure'})
-	                        .reset_index()
-	                        )
+                for sub in submissions:
+                    r.append(process_submission(sub, ticker_list))
 
-	    df = df.merge(df_totalexposure, on='date', how='left')
-	    df['exposure'] = df['exposure']/df['daily_exposure']
-	    df = df.drop('daily_exposure', axis=1)
+                self.cache[d] = r
+                result += self.cache[d]
+                d += dt.timedelta(1)
+                time.sleep(1)
 
-	    if self.save_dir is not None:
-	    	df.to_csv(self.save_dir + 'agged_data_{0}_{1}.csv'.format(str(d0.date()), str(d1.date())))
+        df = pd.DataFrame(result, columns = ['date', 'ticker', 'sentiment', 'exposure'])
+        df = df.groupby(['date', 'ticker']).agg({'sentiment':'mean', 'exposure':'sum'}).reset_index()
+        df_totalexposure = (df
+                            .groupby('date')
+                            .agg({'exposure':sum})
+                            .rename(columns = {'exposure':'daily_exposure'})
+                            .reset_index()
+                            )
 
-	    df['date'] = pd.to_datetime(df['date'])
+        df = df.merge(df_totalexposure, on='date', how='left')
+        df['exposure'] = df['exposure']/df['daily_exposure']
+        df = df.drop('daily_exposure', axis=1)
 
-	    return df
+        if self.save_dir is not None:
+            df.to_csv(self.save_dir + 'agged_data_{0}_{1}.csv'.format(str(d0.date()), str(d1.date())))
 
-	def create_portfolio(self, rdf):
-		tickers = rdf['ticker'].unique()
-		dates   = rdf['date'].unique()
+        df['date'] = pd.to_datetime(df['date'])
 
-		tdf = pd.DataFrame(columns=tickers, index=dates)
+        return df
 
-		for t in tickers:
-			for d in dates:
+    def create_portfolio(self, rdf):
+        tickers = rdf['ticker'].unique()
+        dates   = rdf['date'].unique()
 
-				e = rdf[(rdf['ticker'] == t) & (rdf['date'] == d)]
+        tdf = pd.DataFrame(columns=tickers, index=dates)
 
-				if len(e) > 0:
-					tdf.loc[d, t] = e['exposure'].iloc[0]
-				else:
-					tdf.loc[d, t] = 0
-		
-		sdf = pd.ewma(tdf, span=len(tdf) - 1)
-		rp  = sdf.iloc[-1]
+        for t in tickers:
+            for d in dates:
 
-		for t in rp.index:
-			if rp.loc[t] < self.cutoff:
-				rp.drop(t, inplace=True)
+                e = rdf[(rdf['ticker'] == t) & (rdf['date'] == d)]
 
-		rp = rp / sum(rp)
+                if len(e) > 0:
+                    tdf.loc[d, t] = e['exposure'].iloc[0]
+                else:
+                    tdf.loc[d, t] = 0
+        
+        sdf = pd.ewma(tdf, span=len(tdf) - 1)
+        rp  = sdf.iloc[-1]
 
-		return rp
+        for t in rp.index:
+            if rp.loc[t] < self.cutoff:
+                rp.drop(t, inplace=True)
 
-	def drop_ticker(self, df, t):
-		df.drop([t], inplace=True)
-		df['weight'] = df['weight']/df['weight'].sum()
-		return df
+        rp = rp / sum(rp)
 
-	def get_portfolio(self, tdate, lookback):
-		d0  = tdate - dt.timedelta(lookback)
-		rdf = self.get_raw_exposure_df(d0, tdate)
-		p   =  self.create_portfolio(rdf)
+        return rp
 
-		df = pd.DataFrame(index=p.index, columns=['weight', 'pct_change'])
+    def drop_ticker(self, df, t):
+        df.drop([t], inplace=True)
+        df['weight'] = df['weight']/df['weight'].sum()
+        return df
 
-		df['weight'] = p
+    def get_portfolio(self, tdate, lookback):
+        d0  = tdate - dt.timedelta(lookback)
+        rdf = self.get_raw_exposure_df(d0, tdate)
+        p   =  self.create_portfolio(rdf)
 
-		d1 = next_business_day(tdate)
-		print(d1)
-		print(p.index)
-		for t in p.index:
-			try:
-				sdata = data.DataReader(t, 'quandl', tdate, d1)
-				d     = sdata.index[-2]
-				
-				while len(sdata) <= 1:
-					d1 += dt.timedelta(1)
-					sdata = data.DataReader(t, 'quandl', tdate, d1)
-					d = sdata.index[-2]
-				df.loc[t, 'pct_change'] = (sdata['AdjClose'].iloc[-2] - sdata['AdjClose'].iloc[-1])/sdata['AdjClose'].iloc[-1]
-				print(t, sdata)
-			except:
-				df = self.drop_ticker(df, t)
-		return df, d
+        df = pd.DataFrame(index=p.index, columns=['weight', 'pct_change'])
 
+        df['weight'] = p
+
+        d1 = next_business_day(tdate)
+        print(d1)
+        print(p.index)
+        for t in p.index:
+            try:
+                sdata = data.DataReader(t, 'quandl', tdate, d1)
+                d     = sdata.index[-2]
+                time.sleep(1)
+
+                while len(sdata) <= 1:
+                    d1 = next_business_day(d1)
+                    sdata = data.DataReader(t, 'quandl', tdate, d1, retry_count=10, pause=0.05)
+                    d = sdata.index[-2]
+                    time.sleep(1)
+                print(t, sdata)
+                df.loc[t, 'pct_change'] = (sdata['AdjClose'].iloc[-2] - sdata['AdjClose'].iloc[-1])/sdata['AdjClose'].iloc[-1]
+            except:
+                print('dropping ', t)
+                df = self.drop_ticker(df, t)
+        return df, d
+
+# def sort_dict(dictionary):
+#   key_list = sorted(dictionary.keys())
+#   kl = []
+#   for k in key_list:
 
 if __name__ == '__main__':
-	subr = 'investing'
-	cp   = 'C:/Users/Owner.DESKTOP-UT1NOGO/Desktop/python/wsb-master/dev/credentials2.txt'
-	pc   = portfolio_contructor(subr, cp, cutoff=0.05)
-	
-	pdict = {}
-	cdict = {}
+    subr = 'investing'
+    cp   = 'C:/Users/Owner.DESKTOP-UT1NOGO/Desktop/python/wsb-master/dev/credentials2.txt'
+    pc   = portfolio_contructor(subr, cp, cutoff=0.0001)
+    
+    pdict = {}
+    cdict = {}
 
-	i  = [69]
+    i  = [69]
 
-	d0 = dt.datetime(2017, 9, 28)
-	d1 = dt.datetime(2017, 10, 1)
+    d0 = dt.datetime(2017, 1, 3)
+    d1 = dt.datetime(2017, 10, 1)
 
-	while d0 < d1:
-		p, d0 = pc.get_portfolio(d0, 10)
-		print(d0)
-		print(p.sort_values('weight', ascending=False))
-		pdict[d0] = p
-		pchange   = sum(p['weight'] * p['pct_change'])
-		cdict[d0] = pchange
-		i.append(i[-1] * (1 + pchange))
-		print(pchange, i[-1])
+    idict = {}
 
-	print(i[1:], cdict.keys())
-	plt.plot(list(cdict.keys()), i[1:])
-	plt.show()
+    while d0 < d1:
+        p, d0 = pc.get_portfolio(d0, 20)
+        print(d0)
+        print(p.sort_values('weight', ascending=False))
+        pdict[d0]  = p
+        pchange    = sum(p['weight'] * p['pct_change'])
+        cdict[d0]  = pchange
+        idict[d0]  = i[-1] * (1 + pchange)
+        i.append(i[-1] * (1 + pchange))
+        print(pchange, i[-1])
+
+    plt.plot(list(idict.keys()), list(idict.values()))
+    plt.show()
 
 
-	# aapl = data.DataReader('AMD', 'quandl', d0, d1)
-	# print(aapl.head())
-	# print(aapl.tail())
+    # aapl = data.DataReader('AMD', 'quandl', d0, d1)
+    # print(aapl.head())
+    # print(aapl.tail())
