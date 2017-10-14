@@ -5,7 +5,7 @@ import requests
 import json
 from pandas_datareader import data
 import time
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 
 
 def next_business_day(date):
@@ -22,6 +22,8 @@ class portfolio_contructor(object):
 		self.cred_path = cred_path
 		self.save_dir  = save_dir
 		self.cutoff    = cutoff
+
+		self.cache = {}
 
 	def get_raw_exposure_df(self, d0, d1):
 	    result = []
@@ -50,6 +52,7 @@ class portfolio_contructor(object):
 	    	df.to_csv(self.save_dir + 'agged_data_{0}_{1}.csv'.format(str(d0.date()), str(d1.date())))
 
 	    df['date'] = pd.to_datetime(df['date'])
+
 	    return df
 
 	def create_portfolio(self, rdf):
@@ -99,19 +102,22 @@ class portfolio_contructor(object):
 		for t in p.index:
 			try:
 				sdata = data.DataReader(t, 'quandl', tdate, d1)
-				# time.sleep(3)
+				d     = sdata.index[-2]
+				
 				while len(sdata) <= 1:
 					d1 += dt.timedelta(1)
 					sdata = data.DataReader(t, 'quandl', tdate, d1)
+					d = sdata.index[-2]
 				df.loc[t, 'pct_change'] = (sdata['AdjClose'].iloc[-2] - sdata['AdjClose'].iloc[-1])/sdata['AdjClose'].iloc[-1]
+				print(t, sdata)
 			except:
 				df = self.drop_ticker(df, t)
-		return df, sdata.index[-2]
+		return df, d
 
 
 if __name__ == '__main__':
-	subr = 'wallstreetbets'
-	cp   = 'C:/Users/Owner.DESKTOP-UT1NOGO/Desktop/python/wsb-master/dev/credentials.txt'
+	subr = 'investing'
+	cp   = 'C:/Users/Owner.DESKTOP-UT1NOGO/Desktop/python/wsb-master/dev/credentials2.txt'
 	pc   = portfolio_contructor(subr, cp, cutoff=0.05)
 	
 	pdict = {}
@@ -119,17 +125,17 @@ if __name__ == '__main__':
 
 	i  = [69]
 
-	d0 = dt.datetime(2017, 1, 3)
-	d1 = dt.datetime(2017, 1, 6)
+	d0 = dt.datetime(2017, 9, 28)
+	d1 = dt.datetime(2017, 10, 1)
 
 	while d0 < d1:
-		p, d0 = pc.get_portfolio(d0, 3)
+		p, d0 = pc.get_portfolio(d0, 10)
 		print(d0)
 		print(p.sort_values('weight', ascending=False))
 		pdict[d0] = p
 		pchange   = sum(p['weight'] * p['pct_change'])
 		cdict[d0] = pchange
-		i.append(i[-1] * (1+ pchange))
+		i.append(i[-1] * (1 + pchange))
 		print(pchange, i[-1])
 
 	print(i[1:], cdict.keys())
