@@ -5,6 +5,7 @@ import requests
 import json
 from pandas_datareader import data
 import time
+import matplotlib.pyplot as plt 
 
 
 def next_business_day(date):
@@ -78,6 +79,11 @@ class portfolio_contructor(object):
 
 		return rp
 
+	def drop_ticker(self, df, t):
+		df.drop([t], inplace=True)
+		df['weight'] = df['weight']/df['weight'].sum()
+		return df
+
 	def get_portfolio(self, tdate, lookback):
 		d0  = tdate - dt.timedelta(lookback)
 		rdf = self.get_raw_exposure_df(d0, tdate)
@@ -85,41 +91,51 @@ class portfolio_contructor(object):
 
 		df = pd.DataFrame(index=p.index, columns=['weight', 'pct_change'])
 
-		df.weight = p
+		df['weight'] = p
 
 		d1 = next_business_day(tdate)
 		print(d1)
 		print(p.index)
 		for t in p.index:
-			sdata = data.DataReader(t, 'quandl', tdate, d1)
-			# time.sleep(3)
-			while len(sdata) <= 1:
-				d1 += dt.timedelta(1)
+			try:
 				sdata = data.DataReader(t, 'quandl', tdate, d1)
-			df.loc[t, 'pct_change'] = (sdata['AdjClose'].iloc[-2] - sdata['AdjClose'].iloc[-1])/sdata['AdjClose'].iloc[-1]
+				# time.sleep(3)
+				while len(sdata) <= 1:
+					d1 += dt.timedelta(1)
+					sdata = data.DataReader(t, 'quandl', tdate, d1)
+				df.loc[t, 'pct_change'] = (sdata['AdjClose'].iloc[-2] - sdata['AdjClose'].iloc[-1])/sdata['AdjClose'].iloc[-1]
+			except:
+				df = self.drop_ticker(df, t)
 		return df, sdata.index[-2]
 
 
 if __name__ == '__main__':
 	subr = 'wallstreetbets'
 	cp   = 'C:/Users/Owner.DESKTOP-UT1NOGO/Desktop/python/wsb-master/dev/credentials.txt'
-	pc   = portfolio_contructor(subr, cp, cutoff=0.1)
+	pc   = portfolio_contructor(subr, cp, cutoff=0.05)
 	
 	pdict = {}
 	cdict = {}
 
+	i  = [69]
+
 	d0 = dt.datetime(2017, 1, 3)
-	d1 = dt.datetime(2017, 10, 9)
+	d1 = dt.datetime(2017, 1, 6)
 
 	while d0 < d1:
-		p, d0 = pc.get_portfolio(d0, 10)
+		p, d0 = pc.get_portfolio(d0, 3)
 		print(d0)
 		print(p.sort_values('weight', ascending=False))
 		pdict[d0] = p
-		pchange = sum(p['weight'] * p['pct_change'])
+		pchange   = sum(p['weight'] * p['pct_change'])
 		cdict[d0] = pchange
-		print(pchange)
-		time.sleep(2)
+		i.append(i[-1] * (1+ pchange))
+		print(pchange, i[-1])
+
+	print(i[1:], cdict.keys())
+	plt.plot(list(cdict.keys()), i[1:])
+	plt.show()
+
 
 	# aapl = data.DataReader('AMD', 'quandl', d0, d1)
 	# print(aapl.head())
