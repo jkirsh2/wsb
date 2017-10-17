@@ -16,6 +16,12 @@ def next_business_day(date):
         next_day = next_business_day(next_day)
     return next_day
 
+def previous_business_day(date):
+    us_holidays = holidays.US()
+    previous_day    = date - dt.timedelta(1)
+    if previous_day.weekday() in (5, 6) or previous_day in us_holidays or previous_day in set([dt.datetime(2017, 4, 14)]):
+        previous_day = previous_business_day(previous_day)
+    return previous_day
 
 class portfolio_contructor(object):
     def __init__(self, subr, cred_path, save_dir=None, cutoff=0.01):
@@ -27,7 +33,7 @@ class portfolio_contructor(object):
         self.cache = {}
 
     def get_raw_exposure_df(self, d0, d1):
-        
+
         result = []
         ticker_list = make_ticker_list()
 
@@ -39,6 +45,7 @@ class portfolio_contructor(object):
                 result += self.cache[d]
                 d += dt.timedelta(1)
             else:
+                print('collecting submissions for ' + str(d.date()))
                 r = []
                 submissions = s.get_submissions_between(self.subr, str(d.date()), str((d + dt.timedelta(1)).date()))
 
@@ -97,76 +104,109 @@ class portfolio_contructor(object):
 
         return rp
 
-    def drop_ticker(self, df, t):
-        df.drop([t], inplace=True)
-        df['weight'] = df['weight']/df['weight'].sum()
-        return df
+    def drop_ticker(self, s, t):
+        s.drop([t], inplace=True)
+        s = s / s.sum()
+        return s
+
+    def drop_tickers(self, pdict, dl):
+        for day in pdict:
+            for t in (pdict[day]).index:
+                if t in dl:
+                    pdict[day] = self.drop_ticker(pdict[day], t)
+        return pdict
 
     def get_portfolio(self, tdate, lookback):
         d0  = tdate - dt.timedelta(lookback)
         rdf = self.get_raw_exposure_df(d0, tdate)
         p   =  self.create_portfolio(rdf)
 
-        df = pd.DataFrame(index=p.index, columns=['weight', 'pct_change'])
+        return p
 
-        df['weight'] = p
+    def get_portfolio_dict(self, d0, d1, lookback):
+        pdict = {}
+        d = d0
+        while d < d1:
+            pdict[next_business_day(d)] = self.get_portfolio(d, lookback)
+            d = next_business_day(d)
 
-        d1 = next_business_day(tdate)
-        print(d1)
-        print(p.index)
-        for t in p.index:
+        return pdict
+
+    def get_ticker_list(self, pdict):
+        tlist = []
+
+        for d in pdict:
+            for t in pdict[d].index:
+                if t not in tlist: tlist.append(t)
+
+        return tlist
+
+    def get_close_price_dict(self, d0, d1, tickers):
+        cpdict, droplist = {}, []
+
+        for t in tickers:
             try:
-                sdata = data.DataReader(t, 'quandl', tdate, d1)
-                d     = sdata.index[-2]
-                time.sleep(1)
+                cpdict[t] = data.DataReader(t, 'quandl', d0, next_business_day(d1), retry_count=1, pause=0.05)
+                cpdict[t].index  = pd.to_datetime((cpdict[t]).index)
+                print('collected ' + t)
 
-                while len(sdata) <= 1:
-                    d1 = next_business_day(d1)
-                    sdata = data.DataReader(t, 'quandl', tdate, d1, retry_count=10, pause=0.05)
-                    d = sdata.index[-2]
-                    time.sleep(1)
-                print(t, sdata)
-                df.loc[t, 'pct_change'] = (sdata['AdjClose'].iloc[-2] - sdata['AdjClose'].iloc[-1])/sdata['AdjClose'].iloc[-1]
             except:
-                print('dropping ', t)
-                df = self.drop_ticker(df, t)
-        return df, d
+                print('dropped ' + t)
+                droplist.append(t)
 
-# def sort_dict(dictionary):
-#   key_list = sorted(dictionary.keys())
-#   kl = []
-#   for k in key_list:
+            time.sleep(3)
+
+        return cpdict, droplist
+
+    def get_portfolio_change(self, pdict, cpdict):
+        idict = {}
+
+        for day in pdict:
+            pdict[day] = pdict[day].to_frame()
+            pdict[day].columns = ['weight']
+
+            for t in (pdict[day]).index:
+                try:
+                    p0 = (cpdict[t]).loc[previous_business_day(day), 'AdjClose']
+                    p1 = (cpdict[t]).loc[day, 'AdjClose']
+
+                    (pdict[day])['pct_change'] = (p1 - p0) / p0
+                except:
+
+                    def drop_ticker(self, df, t):
+                        df.drop([t], inplace=True)
+                        df['weight'] = df['weight'] / df['weight'].sum()
+                        return df
+
+                    pdict[day] = drop_ticker(pdict[day], t)
+
+            idict[day] = sum((pdict[day])['weight'] * (pdict[day])['pct_change'])
+
+        return pdict, idict
+
+
 
 if __name__ == '__main__':
-    subr = 'investing'
-    cp   = 'C:/Users/Owner.DESKTOP-UT1NOGO/Desktop/python/wsb-master/dev/credentials2.txt'
-    pc   = portfolio_contructor(subr, cp, cutoff=0.0001)
+    subr = 'wallstreetbets'
+    cp   = 'C:/Users/Owner.DESKTOP-UT1NOGO/Desktop/python/wsb-master/dev/credentials.txt'
+    pc   = portfolio_contructor(subr, cp, cutoff=0.02)
     
-    pdict = {}
-    cdict = {}
+    d0 = dt.datetime(2017, 7, 3)
+    d1 = dt.datetime(2017, 8, 3)
 
-    i  = [69]
+    pdict   = pc.get_portfolio_dict(d0, d1, 20)
+    tlist   = pc.get_ticker_list(pdict)
 
-    d0 = dt.datetime(2017, 1, 3)
-    d1 = dt.datetime(2017, 10, 1)
+    print(tlist)
+    cpdict, dl = pc.get_close_price_dict(d0, d1, tlist)
 
-    idict = {}
+    pdict = pc.drop_tickers(pdict, dl)
 
-    while d0 < d1:
-        p, d0 = pc.get_portfolio(d0, 20)
-        print(d0)
-        print(p.sort_values('weight', ascending=False))
-        pdict[d0]  = p
-        pchange    = sum(p['weight'] * p['pct_change'])
-        cdict[d0]  = pchange
-        idict[d0]  = i[-1] * (1 + pchange)
-        i.append(i[-1] * (1 + pchange))
-        print(pchange, i[-1])
+    pdict, idict = pc.get_portfolio_change(pdict, cpdict)
 
-    plt.plot(list(idict.keys()), list(idict.values()))
+    i = [69]
+    for d in idict:
+        i.append(i[-1] * (idict[d] + 1))
+
+    plt.plot(list(idict.keys()), i[1:])
     plt.show()
-
-
-    # aapl = data.DataReader('AMD', 'quandl', d0, d1)
-    # print(aapl.head())
-    # print(aapl.tail())
