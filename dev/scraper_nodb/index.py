@@ -173,7 +173,7 @@ class portfolio_contructor(object):
                     (pdict[day])['pct_change'] = (p1 - p0) / p0
                 except:
 
-                    def drop_ticker(self, df, t):
+                    def drop_ticker(df, t):
                         df.drop([t], inplace=True)
                         df['weight'] = df['weight'] / df['weight'].sum()
                         return df
@@ -189,10 +189,10 @@ class portfolio_contructor(object):
 if __name__ == '__main__':
     subr = 'wallstreetbets'
     cp   = 'C:/Users/Owner.DESKTOP-UT1NOGO/Desktop/python/wsb-master/dev/credentials.txt'
-    pc   = portfolio_contructor(subr, cp, cutoff=0.02)
+    pc   = portfolio_contructor(subr, cp, cutoff=0.01)
     
-    d0 = dt.datetime(2017, 7, 3)
-    d1 = dt.datetime(2017, 8, 3)
+    d0 = dt.datetime(2017, 1, 3)
+    d1 = dt.datetime(2017, 10, 3)
 
     pdict   = pc.get_portfolio_dict(d0, d1, 20)
     tlist   = pc.get_ticker_list(pdict)
@@ -200,7 +200,8 @@ if __name__ == '__main__':
     print(tlist)
     cpdict, dl = pc.get_close_price_dict(d0, d1, tlist)
 
-    pdict = pc.drop_tickers(pdict, dl)
+    if len(dl) > 0:
+        pdict = pc.drop_tickers(pdict, dl)
 
     pdict, idict = pc.get_portfolio_change(pdict, cpdict)
 
